@@ -67,11 +67,17 @@ Mode Mode::matching(const std::string strHex) {
 }
 
 Mode Mode::leading(const char charLeading) {
-
 	Mode r;
 	r.name = "leading";
 	r.kernel = "profanity_score_leading";
 	r.data1[0] = static_cast<cl_uchar>(hexValue(charLeading));
+	return r;
+}
+
+Mode Mode::gas() {
+	Mode r;
+	r.name = "gas";
+	r.kernel = "profanity_score_gas";
 	return r;
 }
 

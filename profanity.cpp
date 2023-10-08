@@ -151,6 +151,7 @@ int main(int argc, char * * argv) {
 		bool bHelp = false;
 		bool bModeBenchmark = false;
 		bool bModeZeros = false;
+		bool bModeGas = false;
 		bool bModeLetters = false;
 		bool bModeNumbers = false;
 		std::string strModeLeading;
@@ -190,6 +191,7 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('i', "inverse-size", inverseSize);
 		argp.addSwitch('I', "inverse-multiple", inverseMultiple);
 		argp.addSwitch('c', "contract", bMineContract);
+		argp.addSwitch('g', "gas", bModeGas);
 		argp.addSwitch('z', "publicKey", strPublicKey);
 
 		if (!argp.parse()) {
@@ -207,6 +209,8 @@ int main(int argc, char * * argv) {
 			mode = Mode::benchmark();
 		} else if (bModeZeros) {
 			mode = Mode::zeros();
+		} else if (bModeGas) {
+			mode = Mode::gas();
 		} else if (bModeLetters) {
 			mode = Mode::letters();
 		} else if (bModeNumbers) {
