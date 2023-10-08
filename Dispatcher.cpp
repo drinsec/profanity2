@@ -10,16 +10,27 @@
 #include <thread>
 #include <algorithm>
 
-#if defined(__APPLE__) || defined(__MACOSX)
-#include <machine/endian.h>
-#else
-#include <arpa/inet.h>
-#endif
-
 #include "precomp.hpp"
 
+
 #ifndef htonll
-#define htonll(x) ((((uint64_t)htonl(x)) << 32) | htonl((x) >> 32))
+inline uint64_t htonll(uint64_t const hostlonglong)
+{
+#if BYTE_ORDER == LITTLE_ENDIAN
+	union {
+		uint64_t integer;
+		uint8_t bytes[8];
+	} value { hostlonglong };
+	
+	std::swap(value.bytes[0], value.bytes[7]);
+	std::swap(value.bytes[1], value.bytes[6]);
+	std::swap(value.bytes[2], value.bytes[5]);
+	std::swap(value.bytes[3], value.bytes[4]);
+	return value.integer;
+#else
+	return hostlonglong;
+#endif
+}
 #endif
 
 static std::string::size_type fromHex(char c) {
