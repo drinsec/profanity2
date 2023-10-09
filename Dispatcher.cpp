@@ -12,18 +12,20 @@
 
 #include "precomp.hpp"
 
+static char const hexes[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'c','c','d','e','f' };
+
 static std::string toHex(const uint8_t * const s, const size_t len) {
-	std::string b("0123456789abcdef");
-	std::string r;
-
+	auto result = new char[len << 2];
+	
+	size_t r_pos = 0;
 	for (size_t i = 0; i < len; ++i) {
-		const unsigned char h = s[i] / 16;
-		const unsigned char l = s[i] % 16;
-
-		r = r + b.substr(h, 1) + b.substr(l, 1);
+		uint8_t ch = s[i];
+		result[r_pos++] = hexes[(ch & 0xF0) >> 4];
+		result[r_pos++] = hexes[ch & 0xF];
 	}
-
-	return r;
+	std::string s_result(result);
+	
+	return s_result;
 }
 
 static std::string toHex(const cl_ulong4 val) {
@@ -33,7 +35,7 @@ static std::string toHex(const cl_ulong4 val) {
 	return ss.str();
 }
 
-static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
+static void printResult(cl_ulong4 seed, cl_ulong round, cl_ulong round_shift, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
 	// Time delta
 	const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - timeStart).count();
 
@@ -56,7 +58,7 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	std::cout << strVT100ClearLine << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
 
 	std::cout << mode.transformName();
-	std::cout << ": 0x" << strPublic << std::endl;
+	std::cout << ": 0x" << strPublic << " | Round: " << toString(round + round_shift) << " | foundId: " << toString(r.foundId) << std::endl;
 }
 
 unsigned int getKernelExecutionTimeMicros(cl_event & e) {
@@ -147,6 +149,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_clSeedX(clSeedX),
 	m_clSeedY(clSeedY),
 	m_round(0),
+	m_round_shift(0),
 	m_speed(PROFANITY_SPEEDSAMPLES),
 	m_sizeInitialized(0),
 	m_eventFinished(NULL)
@@ -166,6 +169,7 @@ Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mod
 	, m_inverseSize(inverseSize)
 	, m_size(inverseSize*inverseMultiple)
 	, m_clScoreMax(mode.score)
+	, m_next_speed_print(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())
 	, m_clScoreQuit(clScoreQuit)
 	, m_eventFinished(NULL)
 	, m_countPrint(0)
@@ -178,17 +182,34 @@ Dispatcher::~Dispatcher() {
 
 }
 
-void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 initSeed) {
+void Dispatcher::Device::addRound(cl_ulong val) {
+	m_clSeed.s[0] = m_clSeed.s[0] + val;
+	m_round_shift = m_round_shift + val;
+}
+
+void Dispatcher::Device::printSeed() {
+	std::cout << "  Device #" << m_index <<  " Initial Seed: 0x" << toHex(m_clSeed);
+	if(m_round_shift) {
+		std::cout << " / Round: " << m_round_shift;
+	}
+	std::cout << std::endl;
+}
+
+void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 *initSeed, const cl_ulong initRound) {
 	cl_ulong4 seed;
-	if(initSeed.s[0] == 0 && initSeed.s[1] == 0 && initSeed.s[2] == 0 && initSeed.s[3] == 0) {
+	if(initSeed == NULL) {
 		seed = createSeed();
 	} else {
-		seed = initSeed;
+		seed = *initSeed;
 		seed.s[2] = (seed.s[2] & 0x0000ffffffffffff) | ((index  & 0xffff) << 48);
 	}
 	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, m_size, index, m_mode, seed, m_publicKeyX, m_publicKeyY);
+	pDevice->printSeed();
+	if(initRound) {
+		pDevice->addRound(initRound);
+		pDevice->printSeed();
+	}
 	m_vDevices.push_back(pDevice);
-	std::cout << "  Device #" << index << " initial seed: 0x" << toHex(seed) << std::endl;
 }
 
 void Dispatcher::run() {
@@ -414,7 +435,7 @@ void Dispatcher::handleResult(Device & d) {
 					m_quit = true;
 				}
 
-				printResult(d.m_clSeed, d.m_round, r, i, timeStart, m_mode);
+				printResult(d.m_clSeed, d.m_round, d.m_round_shift, r, i, timeStart, m_mode);
 			}
 
 			break;
@@ -436,13 +457,18 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 		{
 			std::lock_guard<std::mutex> lock(m_mutex);
 			d.m_speed.sample(m_size);
-			printSpeed();
+			long long currmillis = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			if(currmillis > m_next_speed_print) {
+				printSpeed(d);
+				m_next_speed_print = currmillis + 50;
+			}
 
 			if( m_quit ) {
 				bDispatch = false;
 				if(--m_countRunning == 0) {
 					clSetUserEventStatus(m_eventFinished, CL_COMPLETE);
 				}
+				d.printSeed();
 			}
 		}
 
@@ -453,7 +479,7 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 }
 
 // This is run when m_mutex is held.
-void Dispatcher::printSpeed() {
+void Dispatcher::printSpeed(Device & d) {
 	++m_countPrint;
 	if( m_countPrint > m_vDevices.size() ) {
 		std::string strGPUs;
@@ -462,12 +488,20 @@ void Dispatcher::printSpeed() {
 		for (auto & e : m_vDevices) {
 			const auto curSpeed = e->m_speed.getSpeed();
 			speedTotal += curSpeed;
-			strGPUs += " GPU" + toString(e->m_index) + ": " + formatSpeed(curSpeed);
+			if (m_vDevices.size() > 1) {
+				if (i == 0) strGPUs += " -";
+				strGPUs += " GPU" + toString(e->m_index) + ": " + formatSpeed(curSpeed);
+			}
 			++i;
 		}
 
 		const std::string strVT100ClearLine = "\33[2K\r";
-		std::cerr << strVT100ClearLine << "Total: " << formatSpeed(speedTotal) << " -" << strGPUs << '\r' << std::flush;
+		if(m_scores_count++ == 0) {
+			m_score_avg = speedTotal;
+		} else {
+			m_score_avg += (speedTotal - m_score_avg) / m_scores_count;
+		}
+		std::cerr << strVT100ClearLine << "Round: " << toString(d.m_round + d.m_round_shift) << " | Total: " << formatSpeed(speedTotal) << " (Avg: " << formatSpeed(m_score_avg) << ")" << strGPUs << "  " << '\r' << std::flush;
 		m_countPrint = 0;
 	}
 }

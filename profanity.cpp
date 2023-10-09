@@ -235,7 +235,9 @@ int main(int argc, char * * argv) {
 		size_t inverseSize = 255;
 		size_t inverseMultiple = 16384;
 		bool bMineContract = false;
-		cl_ulong4 initSeed, pubKeyX, pubKeyY;
+		cl_ulong initRound = 0;
+		cl_ulong4 *initSeed = NULL;
+		cl_ulong4 pubKeyX, pubKeyY;
 
 		argp.addSwitch('h', "help", bHelp);
 		argp.addSwitch('0', "benchmark", bModeBenchmark);
@@ -258,6 +260,7 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('I', "inverse-multiple", inverseMultiple);
 		argp.addSwitch('c', "contract", bMineContract);
 		argp.addSwitch('g', "gas", bModeGas);
+		argp.addSwitch('r', "initRound", initRound);
 		argp.addSwitch('z', "publicKey", strPublicKey);
 
 		if (!argp.parse()) {
@@ -305,16 +308,16 @@ int main(int argc, char * * argv) {
 
 		trimHex(strPublicKey);
 		if (strPublicKey.length() == 128) {
-			initSeed = zero4;
 			pubKeyX = fromHex(strPublicKey.substr(0, 64));
 			pubKeyY = fromHex(strPublicKey.substr(64, 64));
 			//std::cout << "error: this tool requires your public key to derive it's private key security" << std::endl;
 			//return 1;
 		} else {
 			if (strPublicKey.length() == 64) {
-				initSeed = fromHex(strPublicKey);
 				pubKeyX = zero4;
 				pubKeyY = zero4;
+				initSeed = new cl_ulong4;
+				*initSeed = fromHex(strPublicKey);
 			} else {
 				std::cout << "error: -z parameter must be 128 hexademical characters public key or 64 as initial seed" << std::endl;
 				return 1;
@@ -444,7 +447,7 @@ int main(int argc, char * * argv) {
 
 		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, 0, pubKeyX, pubKeyY);
 		for (auto & i : vDevices) {
-			d.addDevice(i, worksizeLocal, mDeviceIndex[i], initSeed);
+			d.addDevice(i, worksizeLocal, mDeviceIndex[i], initSeed, initRound);
 		}
 
 		d.run();

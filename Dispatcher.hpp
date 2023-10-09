@@ -36,7 +36,9 @@ class Dispatcher {
 		struct Device {
 			static cl_command_queue createQueue(cl_context & clContext, cl_device_id & clDeviceId);
 			static cl_kernel createKernel(cl_program & clProgram, const std::string s);
-			static cl_ulong4 createSeed();
+			void printSeed();
+			void addRound(cl_ulong val);
+
 
 			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY);
 			~Device();
@@ -70,6 +72,7 @@ class Dispatcher {
 			cl_ulong4 m_clSeedX;
 			cl_ulong4 m_clSeedY;
 			cl_ulong m_round;
+			cl_ulong m_round_shift;
 
 			// Speed sampling
 			SpeedSample m_speed;
@@ -83,7 +86,7 @@ class Dispatcher {
 		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY);
 		~Dispatcher();
 
-		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 initSeed);
+		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 *initSeed, const cl_ulong initRound);
 		void run();
 
 	private:
@@ -99,7 +102,7 @@ class Dispatcher {
 
 		void onEvent(cl_event event, cl_int status, Device & d);
 
-		void printSpeed();
+		void printSpeed(Device & d);
 
 	private:
 		static void CL_CALLBACK staticCallback(cl_event event, cl_int event_command_exec_status, void * user_data);
@@ -130,6 +133,9 @@ class Dispatcher {
 		bool m_quit;
 		cl_ulong4 m_publicKeyX;
 		cl_ulong4 m_publicKeyY;
+		unsigned long m_scores_count;
+		double m_score_avg;
+		long long m_next_speed_print;
 };
 
 #endif /* HPP_DISPATCHER */
