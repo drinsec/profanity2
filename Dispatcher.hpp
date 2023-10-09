@@ -38,7 +38,7 @@ class Dispatcher {
 			static cl_kernel createKernel(cl_program & clProgram, const std::string s);
 			static cl_ulong4 createSeed();
 
-			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeedX, cl_ulong4 clSeedY);
+			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY);
 			~Device();
 
 			Dispatcher & m_parent;
@@ -80,10 +80,10 @@ class Dispatcher {
 		};
 
 	public:
-		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const std::string & seedPublicKey);
+		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY);
 		~Dispatcher();
 
-		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index);
+		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 initSeed);
 		void run();
 
 	private:
@@ -96,7 +96,6 @@ class Dispatcher {
 		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, cl_event * pEvent);
 
 		void handleResult(Device & d);
-		void randomizeSeed(Device & d);
 
 		void onEvent(cl_event event, cl_int status, Device & d);
 

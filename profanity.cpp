@@ -25,6 +25,71 @@
 #include "Mode.hpp"
 #include "help.hpp"
 
+#ifndef htonll
+inline uint64_t htonll(uint64_t const hostlonglong)
+{
+#if BYTE_ORDER == LITTLE_ENDIAN
+	union {
+		uint64_t integer;
+		uint8_t bytes[8];
+	} value { hostlonglong };
+	
+	std::swap(value.bytes[0], value.bytes[7]);
+	std::swap(value.bytes[1], value.bytes[6]);
+	std::swap(value.bytes[2], value.bytes[5]);
+	std::swap(value.bytes[3], value.bytes[4]);
+	return value.integer;
+#else
+	return hostlonglong;
+#endif
+}
+#endif
+
+static cl_ulong4 zero4 = {.s = {0,0,0,0}};
+
+static std::string::size_type fromHex(char c) {
+	if (c >= 'A' && c <= 'F') {
+		c += 'a' - 'A';
+	}
+
+	const std::string hex = "0123456789abcdef";
+	const std::string::size_type ret = hex.find(c);
+	return ret;
+}
+
+static cl_ulong4 fromHex(const std::string & strHex) {
+	uint8_t data[32];
+	std::fill(data, data + sizeof(data), cl_uchar(0));
+
+	auto index = 0;
+	for(size_t i = 0; i < strHex.size(); i += 2) {
+		const auto indexHi = fromHex(strHex[i]);
+		const auto indexLo = i + 1 < strHex.size() ? fromHex(strHex[i+1]) : std::string::npos;
+
+		const auto valHi = (indexHi == std::string::npos) ? 0 : indexHi << 4;
+		const auto valLo = (indexLo == std::string::npos) ? 0 : indexLo;
+
+		data[index] = valHi | valLo;
+		++index;
+	}
+
+	cl_ulong4 res = {
+		.s = {
+			htonll(*(uint64_t *)(data + 24)),
+			htonll(*(uint64_t *)(data + 16)),
+			htonll(*(uint64_t *)(data + 8)),
+			htonll(*(uint64_t *)(data + 0)),
+		}
+	};
+	return res;
+}
+
+static void trimHex(std::string & strHex) {
+	if(strHex.rfind("0x", 0) == 0 || strHex.rfind("0X", 0) == 0) {
+		strHex.erase(0, 2);
+	}
+}
+
 std::string readFile(const char * const szFilename)
 {
 	std::ifstream in(szFilename, std::ios::in | std::ios::binary);
@@ -170,6 +235,7 @@ int main(int argc, char * * argv) {
 		size_t inverseSize = 255;
 		size_t inverseMultiple = 16384;
 		bool bMineContract = false;
+		cl_ulong4 initSeed, pubKeyX, pubKeyY;
 
 		argp.addSwitch('h', "help", bHelp);
 		argp.addSwitch('0', "benchmark", bModeBenchmark);
@@ -231,15 +297,28 @@ int main(int argc, char * * argv) {
 			std::cout << g_strHelp << std::endl;
 			return 0;
 		}
-		
+
 		if (strPublicKey.length() == 0) {
 			std::cout << "error: this tool requires your public key to derive it's private key security" << std::endl;
 			return 1;
 		}
 
-		if (strPublicKey.length() != 128) {
-			std::cout << "error: public key must be 128 hexademical characters long" << std::endl;
-			return 1;
+		trimHex(strPublicKey);
+		if (strPublicKey.length() == 128) {
+			initSeed = zero4;
+			pubKeyX = fromHex(strPublicKey.substr(0, 64));
+			pubKeyY = fromHex(strPublicKey.substr(64, 64));
+			//std::cout << "error: this tool requires your public key to derive it's private key security" << std::endl;
+			//return 1;
+		} else {
+			if (strPublicKey.length() == 64) {
+				initSeed = fromHex(strPublicKey);
+				pubKeyX = zero4;
+				pubKeyY = zero4;
+			} else {
+				std::cout << "error: -z parameter must be 128 hexademical characters public key or 64 as initial seed" << std::endl;
+				return 1;
+			}
 		}
 
 		std::cout << "Mode: " << mode.name << std::endl;
@@ -363,9 +442,9 @@ int main(int argc, char * * argv) {
 
 		std::cout << std::endl;
 
-		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, 0, strPublicKey);
+		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, 0, pubKeyX, pubKeyY);
 		for (auto & i : vDevices) {
-			d.addDevice(i, worksizeLocal, mDeviceIndex[i]);
+			d.addDevice(i, worksizeLocal, mDeviceIndex[i], initSeed);
 		}
 
 		d.run();

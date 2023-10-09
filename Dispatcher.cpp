@@ -12,64 +12,6 @@
 
 #include "precomp.hpp"
 
-
-#ifndef htonll
-inline uint64_t htonll(uint64_t const hostlonglong)
-{
-#if BYTE_ORDER == LITTLE_ENDIAN
-	union {
-		uint64_t integer;
-		uint8_t bytes[8];
-	} value { hostlonglong };
-	
-	std::swap(value.bytes[0], value.bytes[7]);
-	std::swap(value.bytes[1], value.bytes[6]);
-	std::swap(value.bytes[2], value.bytes[5]);
-	std::swap(value.bytes[3], value.bytes[4]);
-	return value.integer;
-#else
-	return hostlonglong;
-#endif
-}
-#endif
-
-static std::string::size_type fromHex(char c) {
-	if (c >= 'A' && c <= 'F') {
-		c += 'a' - 'A';
-	}
-
-	const std::string hex = "0123456789abcdef";
-	const std::string::size_type ret = hex.find(c);
-	return ret;
-}
-
-static cl_ulong4 fromHex(const std::string & strHex) {
-	uint8_t data[32];
-	std::fill(data, data + sizeof(data), cl_uchar(0));
-
-	auto index = 0;
-	for(size_t i = 0; i < strHex.size(); i += 2) {
-		const auto indexHi = fromHex(strHex[i]);
-		const auto indexLo = i + 1 < strHex.size() ? fromHex(strHex[i+1]) : std::string::npos;
-
-		const auto valHi = (indexHi == std::string::npos) ? 0 : indexHi << 4;
-		const auto valLo = (indexLo == std::string::npos) ? 0 : indexLo;
-
-		data[index] = valHi | valLo;
-		++index;
-	}
-
-	cl_ulong4 res = {
-		.s = {
-			htonll(*(uint64_t *)(data + 24)),
-			htonll(*(uint64_t *)(data + 16)),
-			htonll(*(uint64_t *)(data + 8)),
-			htonll(*(uint64_t *)(data + 0)),
-		}
-	};
-	return res;
-}
-
 static std::string toHex(const uint8_t * const s, const size_t len) {
 	std::string b("0123456789abcdef");
 	std::string r;
@@ -82,6 +24,13 @@ static std::string toHex(const uint8_t * const s, const size_t len) {
 	}
 
 	return r;
+}
+
+static std::string toHex(const cl_ulong4 val) {
+	std::ostringstream ss;
+	ss << std::hex << std::setfill('0');
+	ss << std::setw(16) << val.s[3] << std::setw(16) << val.s[2] << std::setw(16) << val.s[1] << std::setw(16) << val.s[0];
+	return ss.str();
 }
 
 static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
@@ -97,10 +46,7 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	seedRes.s[2] = seed.s[2] + carry; carry = !seedRes.s[2];
 	seedRes.s[3] = seed.s[3] + carry + r.foundId;
 
-	std::ostringstream ss;
-	ss << std::hex << std::setfill('0');
-	ss << std::setw(16) << seedRes.s[3] << std::setw(16) << seedRes.s[2] << std::setw(16) << seedRes.s[1] << std::setw(16) << seedRes.s[0];
-	const std::string strPrivate = ss.str();
+	const std::string strPrivate = toHex(seedRes);
 
 	// Format public key
 	const std::string strPublic = toHex(r.foundHash, 20);
@@ -155,7 +101,13 @@ cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::st
 	return ret == NULL ? throw std::runtime_error("failed to create kernel \"" + s + "\"") : ret;
 }
 
-cl_ulong4 Dispatcher::Device::createSeed() {
+static cl_ulong4 createSeed() {
+	cl_ulong4 r;
+	r.s[0] = 1;
+	r.s[1] = 1;
+	r.s[2] = 1;
+	r.s[3] = 1;
+	return r;
 #ifdef PROFANITY_DEBUG
 	cl_ulong4 r;
 	r.s[0] = 1;
@@ -178,7 +130,7 @@ cl_ulong4 Dispatcher::Device::createSeed() {
 #endif
 }
 
-Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeedX, cl_ulong4 clSeedY) :
+Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY) :
 	m_parent(parent),
 	m_index(index),
 	m_clDeviceId(clDeviceId),
@@ -197,7 +149,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, PROFANITY_MAX_SCORE + 1),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
-	m_clSeed(createSeed()),
+	m_clSeed(clSeed),
 	m_clSeedX(clSeedX),
 	m_clSeedY(clSeedY),
 	m_round(0),
@@ -212,7 +164,7 @@ Dispatcher::Device::~Device() {
 
 }
 
-Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const std::string & seedPublicKey)
+Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY)
 	: m_clContext(clContext)
 	, m_clProgram(clProgram)
 	, m_mode(mode)
@@ -223,8 +175,8 @@ Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mod
 	, m_clScoreQuit(clScoreQuit)
 	, m_eventFinished(NULL)
 	, m_countPrint(0)
-	, m_publicKeyX(fromHex(seedPublicKey.substr(0, 64)))
-	, m_publicKeyY(fromHex(seedPublicKey.substr(64, 64)))
+	, m_publicKeyX(pubKeyX)
+	, m_publicKeyY(pubKeyY)
 {
 }
 
@@ -232,9 +184,17 @@ Dispatcher::~Dispatcher() {
 
 }
 
-void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index) {
-	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, m_size, index, m_mode, m_publicKeyX, m_publicKeyY);
+void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 initSeed) {
+	cl_ulong4 seed;
+	if(initSeed.s[0] == 0 && initSeed.s[1] == 0 && initSeed.s[2] == 0 && initSeed.s[3] == 0) {
+		seed = createSeed();
+	} else {
+		seed = initSeed;
+		seed.s[2] = (seed.s[2] & 0x0000ffffffffffff) | ((index  & 0xffff) << 48);
+	}
+	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, m_size, index, m_mode, seed, m_publicKeyX, m_publicKeyY);
 	m_vDevices.push_back(pDevice);
+	std::cout << "  Device #" << index << " initial seed: 0x" << toHex(seed) << std::endl;
 }
 
 void Dispatcher::run() {

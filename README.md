@@ -46,8 +46,9 @@ $ python3
 usage: ./profanity2 [OPTIONS]
 
   Mandatory args:
-    -z                      Seed public key to start, add it's private key
+    -z                      Seed public key to start (64 bytes hex), add it's private key
                             to the "profanity2" resulting private key.
+                            Can be interpreted as an initial seed if passed 32 bytes hex.
 
   Basic modes:
     --benchmark             Run without any scoring, a benchmark.

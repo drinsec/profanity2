@@ -443,21 +443,7 @@ void profanity_init_seed(__global const point * const precomp, point * const p, 
 
 __kernel void profanity_init(__global const point * const precomp, __global mp_number * const pDeltaX, __global mp_number * const pPrevLambda, __global result * const pResult, const ulong4 seed, const ulong4 seedX, const ulong4 seedY) {
 	const size_t id = get_global_id(0);
-	point p = {
-		.x = {.d = {
-			seedX.x & 0xFFFFFFFF, seedX.x >> 32,
-			seedX.y & 0xFFFFFFFF, seedX.y >> 32,
-			seedX.z & 0xFFFFFFFF, seedX.z >> 32,
-			seedX.w & 0xFFFFFFFF, seedX.w >> 32,
-		}},
-		.y = {.d = {
-			seedY.x & 0xFFFFFFFF, seedY.x >> 32,
-			seedY.y & 0xFFFFFFFF, seedY.y >> 32,
-			seedY.z & 0xFFFFFFFF, seedY.z >> 32,
-			seedY.w & 0xFFFFFFFF, seedY.w >> 32,
-		}},
-	};
-	point p_random;
+	point p, p_random;
 	bool bIsFirst = true;
 
 	mp_number tmp1, tmp2;
@@ -468,7 +454,27 @@ __kernel void profanity_init(__global const point * const precomp, __global mp_n
 	profanity_init_seed(precomp, &p_random, &bIsFirst, 8 * 255 * 1, seed.y);
 	profanity_init_seed(precomp, &p_random, &bIsFirst, 8 * 255 * 2, seed.z);
 	profanity_init_seed(precomp, &p_random, &bIsFirst, 8 * 255 * 3, seed.w + id);
-	point_add(&p, &p, &p_random);
+
+	bool usePubKeySeed = (seedX.x != 0) || (seedX.y != 0) || (seedX.z != 0) || (seedX.w != 0) || (seedY.x != 0) || (seedY.y != 0) || (seedY.z != 0) || (seedY.w != 0);
+	if(usePubKeySeed) {
+		point p_seed = {
+			.x = {.d = {
+				seedX.x & 0xFFFFFFFF, seedX.x >> 32,
+				seedX.y & 0xFFFFFFFF, seedX.y >> 32,
+				seedX.z & 0xFFFFFFFF, seedX.z >> 32,
+				seedX.w & 0xFFFFFFFF, seedX.w >> 32,
+			}},
+			.y = {.d = {
+				seedY.x & 0xFFFFFFFF, seedY.x >> 32,
+				seedY.y & 0xFFFFFFFF, seedY.y >> 32,
+				seedY.z & 0xFFFFFFFF, seedY.z >> 32,
+				seedY.w & 0xFFFFFFFF, seedY.w >> 32,
+			}},
+		};
+		point_add(&p, &p_seed, &p_random);
+	} else {
+		p = p_random;
+	}
 
 	// Calculate current lambda in this point
 	mp_mod_sub_gx(&tmp1, &p.x);
