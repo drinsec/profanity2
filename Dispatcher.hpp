@@ -89,6 +89,12 @@ class Dispatcher {
 		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 *initSeed, const cl_ulong initRound);
 		void run();
 
+		static std::string toHex(const uint8_t * s, const size_t len);
+		static std::string toHex(const cl_ulong4 val);
+		static std::string toHex(const unsigned long val);
+		static std::string hexToStr(const std::string &str);
+		static std::string toTron(const uint8_t * s);
+
 	private:
 		void init();
 		void initBegin(Device & d);
@@ -134,7 +140,7 @@ class Dispatcher {
 		cl_ulong4 m_publicKeyX;
 		cl_ulong4 m_publicKeyY;
 		unsigned long m_scores_count;
-		double m_score_avg;
+		unsigned long long m_score_avg_sum;
 		long long m_next_speed_print;
 };
 

@@ -1,6 +1,8 @@
 #include "Dispatcher.hpp"
+#include "hash_sha256.h"
 
 // Includes
+#include <cstring>
 #include <stdexcept>
 #include <iostream>
 #include <thread>
@@ -12,10 +14,10 @@
 
 #include "precomp.hpp"
 
-static char const hexes[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'c','c','d','e','f' };
+static char const hexes[17] = "0123456789abcdef";
 
-static std::string toHex(const uint8_t * const s, const size_t len) {
-	auto result = new char[len << 2];
+std::string Dispatcher::toHex(const uint8_t * s, const size_t len) {
+	auto result = new char[(len << 2) + 1];
 	
 	size_t r_pos = 0;
 	for (size_t i = 0; i < len; ++i) {
@@ -23,16 +25,83 @@ static std::string toHex(const uint8_t * const s, const size_t len) {
 		result[r_pos++] = hexes[(ch & 0xF0) >> 4];
 		result[r_pos++] = hexes[ch & 0xF];
 	}
+	result[r_pos] = '\0';
 	std::string s_result(result);
 	
 	return s_result;
 }
 
-static std::string toHex(const cl_ulong4 val) {
+std::string Dispatcher::toHex(const cl_ulong4 val) {
 	std::ostringstream ss;
-	ss << std::hex << std::setfill('0');
-	ss << std::setw(16) << val.s[3] << std::setw(16) << val.s[2] << std::setw(16) << val.s[1] << std::setw(16) << val.s[0];
+	ss << std::hex << std::setfill('0') << std::setw(16) << val.s[3] << std::setw(16) << val.s[2] << std::setw(16) << val.s[1] << std::setw(16) << val.s[0];
 	return ss.str();
+}
+
+std::string Dispatcher::toHex(const unsigned long val) {
+	std::ostringstream ss;
+	ss << std::hex << std::setfill('0') << std::setw(8) << val;
+	return ss.str();
+}
+
+static const uint8_t base58Alphabet[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+static std::string base58Encode(const std::vector<uint8_t> &data)
+{
+	std::vector<uint8_t> digits((data.size() * 138 / 100) + 1);
+	size_t digitslen = 1;
+	for (size_t i = 0; i < data.size(); i++)
+	{
+		uint32_t carry = static_cast<uint32_t>(data[i]);
+		for (size_t j = 0; j < digitslen; j++)
+		{
+			carry = carry + static_cast<uint32_t>(digits[j] << 8);
+			digits[j] = static_cast<uint8_t>(carry % 58);
+			carry /= 58;
+		}
+		for (; carry; carry /= 58)
+		{
+			digits[digitslen++] = static_cast<uint8_t>(carry % 58);
+		}
+	}
+	std::string result;
+	for (size_t i = 0; i < (data.size() - 1) && !data[i]; i++)
+	{
+		result.push_back(base58Alphabet[0]);
+	}
+	for (size_t i = 0; i < digitslen; i++)
+	{
+		result.push_back(base58Alphabet[digits[digitslen - 1 - i]]);
+	}
+	return result;
+}
+
+std::string Dispatcher::hexToStr(const std::string &str)
+{
+	std::string result;
+	for (size_t i = 0; i < str.length(); i += 2)
+	{
+		std::string byte = str.substr(i, 2);
+		char chr = (char)(int)strtol(byte.c_str(), NULL, 16);
+		result.push_back(chr);
+	}
+	return result;
+}
+
+std::string Dispatcher::toTron(const uint8_t * s) {
+	std::vector<uint8_t> tronAddress(25);
+	tronAddress[0] = 0x41;
+	std::memcpy(&tronAddress[1], &s[0], 20);
+	
+	hash_sha256 hasher;
+	hasher.sha256_init();
+	hasher.sha256_update(&tronAddress[0], 21);
+	std::array<std::uint8_t, 32U> hash_result = hasher.sha256_final();
+	hasher.sha256_init();
+	hasher.sha256_update(&hash_result[0], 32);
+	hash_result = hasher.sha256_final();
+	memcpy(&tronAddress[21], &hash_result[0], 4);
+	
+	return base58Encode( tronAddress );
 }
 
 static void printResult(cl_ulong4 seed, cl_ulong round, cl_ulong round_shift, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
@@ -43,22 +112,23 @@ static void printResult(cl_ulong4 seed, cl_ulong round, cl_ulong round_shift, re
 	cl_ulong carry = 0;
 	cl_ulong4 seedRes;
 
-	seedRes.s[0] = seed.s[0] + round; carry = seedRes.s[0] < round;
-	seedRes.s[1] = seed.s[1] + carry; carry = !seedRes.s[1];
-	seedRes.s[2] = seed.s[2] + carry; carry = !seedRes.s[2];
+	seedRes.s[0] = seed.s[0] + round;
+	carry = seedRes.s[0] < round;
+	seedRes.s[1] = seed.s[1] + carry;
+	carry = !seedRes.s[1];
+	seedRes.s[2] = seed.s[2] + carry;
+	carry = !seedRes.s[2];
 	seedRes.s[3] = seed.s[3] + carry + r.foundId;
 
-	const std::string strPrivate = toHex(seedRes);
+	const std::string strPrivate = Dispatcher::toHex(seedRes);
 
 	// Format public key
-	const std::string strPublic = toHex(r.foundHash, 20);
+	const std::string strPublic = Dispatcher::toHex(r.foundHash, 20);
+	const std::string strPublicTron = Dispatcher::toTron(r.foundHash);
 
 	// Print
-	const std::string strVT100ClearLine = "\33[2K\r";
-	std::cout << strVT100ClearLine << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
-
-	std::cout << mode.transformName();
-	std::cout << ": 0x" << strPublic << " | Round: " << toString(round + round_shift) << " | foundId: " << toString(r.foundId) << std::endl;
+	std::cout << "\33[2K\r" << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
+	std::cout << mode.transformName() << ": 0x" << strPublic << " | " << strPublicTron << " | Round: " << toString(round + round_shift) << " | foundId: " << toString(r.foundId) << std::endl;
 }
 
 unsigned int getKernelExecutionTimeMicros(cl_event & e) {
@@ -175,6 +245,7 @@ Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mod
 	, m_countPrint(0)
 	, m_publicKeyX(pubKeyX)
 	, m_publicKeyY(pubKeyY)
+	, m_scores_count(0)
 {
 }
 
@@ -496,12 +567,12 @@ void Dispatcher::printSpeed(Device & d) {
 		}
 
 		const std::string strVT100ClearLine = "\33[2K\r";
-		if(m_scores_count++ == 0) {
-			m_score_avg = speedTotal;
+		if(m_scores_count++) {
+			m_score_avg_sum += speedTotal;
 		} else {
-			m_score_avg += (speedTotal - m_score_avg) / m_scores_count;
+			m_score_avg_sum = speedTotal;
 		}
-		std::cerr << strVT100ClearLine << "Round: " << toString(d.m_round + d.m_round_shift) << " | Total: " << formatSpeed(speedTotal) << " (Avg: " << formatSpeed(m_score_avg) << ")" << strGPUs << "  " << '\r' << std::flush;
+		std::cerr << strVT100ClearLine << "Round: " << toString(d.m_round + d.m_round_shift) << " | Total: " << formatSpeed(speedTotal) << " (Avg: " << formatSpeed(m_score_avg_sum / m_scores_count) << ")" << strGPUs << "  " << '\r' << std::flush;
 		m_countPrint = 0;
 	}
 }

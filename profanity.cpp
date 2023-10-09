@@ -20,14 +20,19 @@
 #define CL_DEVICE_PCI_BUS_ID_NV  0x4008
 #define CL_DEVICE_PCI_SLOT_ID_NV 0x4009
 
+#if defined(WIN32) || defined(_WIN32) 
+#define PATH_SEPARATOR "\\" 
+#else 
+#define PATH_SEPARATOR "/" 
+#endif 
+
 #include "Dispatcher.hpp"
 #include "ArgParser.hpp"
 #include "Mode.hpp"
 #include "help.hpp"
 
 #ifndef htonll
-inline uint64_t htonll(uint64_t const hostlonglong)
-{
+inline uint64_t htonll(uint64_t const hostlonglong) {
 #if BYTE_ORDER == LITTLE_ENDIAN
 	union {
 		uint64_t integer;
@@ -44,6 +49,20 @@ inline uint64_t htonll(uint64_t const hostlonglong)
 #endif
 }
 #endif
+
+static uint32_t crc32_update(uint32_t crc, const char* data, size_t len) {
+	for (int i = 0; i < len; ++i) {
+		crc ^= static_cast<uint32_t>(data[i]);
+		for (int j = 0; j < 8; ++j)
+			crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+	}
+
+	return crc;
+}
+
+static uint32_t crc32(uint32_t crc, const char* data, size_t len) {
+    return crc32_update(0xFFFFFFFF, data, len) ^ 0xFFFFFFFF;
+}
 
 static cl_ulong4 zero4 = {.s = {0,0,0,0}};
 
@@ -90,11 +109,24 @@ static void trimHex(std::string & strHex) {
 	}
 }
 
-std::string readFile(const char * const szFilename)
+std::ifstream _in_currant_or_base(std::string baseDir, const char * const szFilename)
 {
-	std::ifstream in(szFilename, std::ios::in | std::ios::binary);
+	std::ifstream result;
+	result.open(szFilename, std::ios::in | std::ios::binary);
+	if(result) return result;
+	result.open(baseDir + PATH_SEPARATOR + szFilename, std::ios::in | std::ios::binary);
+	return result;
+}
+
+std::string readFile(std::string baseDir, const char * const szFilename)
+{
+	std::ifstream _in = _in_currant_or_base(baseDir, szFilename);
+	if(!_in) {
+		std::cout << szFilename << " not exists!" << std::endl;
+		return "";
+	}
 	std::ostringstream contents;
-	contents << in.rdbuf();
+	contents << _in.rdbuf();
 	return contents.str();
 }
 
@@ -200,9 +232,9 @@ bool printResult(const cl_int err) {
 	return err != CL_SUCCESS;
 }
 
-std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize) {
+std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize, unsigned long checksums) {
 	const auto uniqueId = getUniqueDeviceIdentifier(d);
-	return "cache-opencl." + toString(inverseSize) + "." + toString(uniqueId);
+	return "cache-opencl-" + Dispatcher::toHex(checksums) + "." + toString(inverseSize) + "." + toString(uniqueId);
 }
 
 int main(int argc, char * * argv) {
@@ -238,6 +270,19 @@ int main(int argc, char * * argv) {
 		cl_ulong initRound = 0;
 		cl_ulong4 *initSeed = NULL;
 		cl_ulong4 pubKeyX, pubKeyY;
+
+		std::string argv0(argv[0]);
+		std::string base = argv0.substr(0, argv0.find_last_of(PATH_SEPARATOR));
+
+		const std::string strKeccak = readFile(base, "keccak.cl");
+		if(strKeccak.empty()) return 1;
+		const std::string strVanity = readFile(base, "profanity.cl");
+		if(strVanity.empty()) return 1;
+
+		const char * szKernels[] = { strKeccak.c_str(), strVanity.c_str() };
+		unsigned long KernelsChecksum = crc32_update(0xFFFFFFFF, szKernels[0], strKeccak.size());
+		KernelsChecksum = crc32_update(KernelsChecksum, szKernels[1], strVanity.size());
+		KernelsChecksum = KernelsChecksum ^ 0xFFFFFFFF;
 
 		argp.addSwitch('h', "help", bHelp);
 		argp.addSwitch('0', "benchmark", bModeBenchmark);
@@ -358,7 +403,7 @@ int main(int argc, char * * argv) {
 
 			// Check if there's a prebuilt binary for this device and load it
 			if(!bNoCache) {
-				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize), std::ios::binary);
+				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize, KernelsChecksum), std::ios::binary);
 				if (fileIn.is_open()) {
 					vDeviceBinary.push_back(std::string((std::istreambuf_iterator<char>(fileIn)), std::istreambuf_iterator<char>()));
 					vDeviceBinarySize.push_back(vDeviceBinary.back().size());
@@ -403,10 +448,6 @@ int main(int argc, char * * argv) {
 		} else {
 			// Create a program from the kernel source
 			std::cout << "  Compiling kernel..." << std::flush;
-			const std::string strKeccak = readFile("keccak.cl");
-			const std::string strVanity = readFile("profanity.cl");
-			const char * szKernels[] = { strKeccak.c_str(), strVanity.c_str() };
-
 			clProgram = clCreateProgramWithSource(clContext, sizeof(szKernels) / sizeof(char *), szKernels, NULL, &errorCode);
 			if (printResult(clProgram, errorCode)) {
 				return 1;
@@ -437,7 +478,7 @@ int main(int argc, char * * argv) {
 			std::cout << "  Saving program..." << std::flush;
 			auto binaries = getBinaries(clProgram);
 			for (size_t i = 0; i < binaries.size(); ++i) {
-				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize), std::ios::binary);
+				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize, KernelsChecksum), std::ios::binary);
 				fileOut.write(binaries[i].data(), binaries[i].size());
 			}
 			std::cout << "OK" << std::endl;
