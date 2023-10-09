@@ -102,12 +102,6 @@ cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::st
 }
 
 static cl_ulong4 createSeed() {
-	cl_ulong4 r;
-	r.s[0] = 1;
-	r.s[1] = 1;
-	r.s[2] = 1;
-	r.s[3] = 1;
-	return r;
 #ifdef PROFANITY_DEBUG
 	cl_ulong4 r;
 	r.s[0] = 1;
