@@ -11,10 +11,11 @@
 #include <random>
 #include <thread>
 #include <algorithm>
+#include <unistd.h>
 
 #include "precomp.hpp"
 
-static char const hexes[17] = "0123456789abcdef";
+static char const hexes[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
 std::string Dispatcher::toHex(const uint8_t * s, const size_t len) {
 	auto result = new char[(len << 2) + 1];
@@ -75,6 +76,76 @@ static std::string base58Encode(const std::vector<uint8_t> &data)
 	return result;
 }
 
+static const int8_t mapBase58[256] = {
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1, 0, 1, 2, 3, 4, 5, 6,  7, 8,-1,-1,-1,-1,-1,-1,
+    -1, 9,10,11,12,13,14,15, 16,-1,17,18,19,20,21,-1,
+    22,23,24,25,26,27,28,29, 30,31,32,-1,-1,-1,-1,-1,
+    -1,33,34,35,36,37,38,39, 40,41,42,43,-1,44,45,46,
+    47,48,49,50,51,52,53,54, 55,56,57,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
+};
+
+bool Dispatcher::DecodeBase58(const char* psz, std::vector<unsigned char>& vch, int max_ret_len)
+{
+    // Skip leading spaces.
+    while (*psz && *psz == ' ')
+        psz++;
+    // Skip and count leading '1's.
+    int zeroes = 0;
+    int length = 0;
+    while (*psz == '1') {
+        zeroes++;
+        if (zeroes > max_ret_len) return false;
+        psz++;
+    }
+    // Allocate enough space in big-endian base256 representation.
+    int size = strlen(psz) * 733 /1000 + 1; // log(58) / log(256), rounded up.
+    std::vector<unsigned char> b256(size);
+    // Process the characters.
+    static_assert(sizeof(mapBase58) == 256, "mapBase58.size() should be 256"); // guarantee not out of range
+    while (*psz && *psz != ' ') {
+        // Decode base58 character
+        int carry = mapBase58[(uint8_t)*psz];
+        if (carry == -1)  // Invalid b58 character
+            return false;
+        int i = 0;
+        for (std::vector<unsigned char>::reverse_iterator it = b256.rbegin(); (carry != 0 || i < length) && (it != b256.rend()); ++it, ++i) {
+            carry += 58 * (*it);
+            *it = carry % 256;
+            carry /= 256;
+        }
+        length = i;
+        if (length + zeroes > max_ret_len) {
+			std::cout << "length: " << length << " zeroes: " << zeroes << " > " << max_ret_len << std::endl;
+        	return false;
+        }
+        psz++;
+    }
+    // Skip trailing spaces.
+    while (*psz == ' ')
+        psz++;
+    if (*psz != 0)
+        return false;
+    // Skip leading zeroes in b256.
+    std::vector<unsigned char>::iterator it = b256.begin() + (size - length);
+    // Copy result into output vector.
+    vch.reserve(zeroes + (b256.end() - it));
+    vch.assign(zeroes, 0x00);
+    while (it != b256.end())
+        vch.push_back(*(it++));
+    return true;
+}
+
 std::string Dispatcher::hexToStr(const std::string &str)
 {
 	std::string result;
@@ -104,7 +175,7 @@ std::string Dispatcher::toTron(const uint8_t * s) {
 	return base58Encode( tronAddress );
 }
 
-static void printResult(cl_ulong4 seed, cl_ulong round, cl_ulong round_shift, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
+static void printResult(cl_ulong4 seed, cl_ulong round, cl_ulong round_shift, result r, cl_ulong score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
 	// Time delta
 	const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - timeStart).count();
 
@@ -196,7 +267,7 @@ static cl_ulong4 createSeed() {
 #endif
 }
 
-Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY) :
+Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, const cl_ulong clScoreLimit, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY) :
 	m_parent(parent),
 	m_index(index),
 	m_clDeviceId(clDeviceId),
@@ -212,7 +283,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_memPointsDeltaX(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memInversedNegativeDoubleGy(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memPrevLambda(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
-	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, PROFANITY_MAX_SCORE + 1),
+	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, clScoreLimit + 1),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_clSeed(clSeed),
@@ -231,16 +302,18 @@ Dispatcher::Device::~Device() {
 
 }
 
-Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY)
+Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_ulong clScoreLimit, const cl_ulong RoundLimit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY)
 	: m_clContext(clContext)
 	, m_clProgram(clProgram)
 	, m_mode(mode)
 	, m_worksizeMax(worksizeMax)
 	, m_inverseSize(inverseSize)
 	, m_size(inverseSize*inverseMultiple)
-	, m_clScoreMax(mode.score)
+	, m_clScoreMax(0)
 	, m_next_speed_print(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())
-	, m_clScoreQuit(clScoreQuit)
+	, m_clScoreLimit(clScoreLimit)
+	, m_clScoreQuit(clScoreLimit)
+	, m_clRoundLimit(RoundLimit)
 	, m_eventFinished(NULL)
 	, m_countPrint(0)
 	, m_publicKeyX(pubKeyX)
@@ -274,7 +347,7 @@ void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, 
 		seed = *initSeed;
 		seed.s[2] = (seed.s[2] & 0x0000ffffffffffff) | ((index  & 0xffff) << 48);
 	}
-	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, m_size, index, m_mode, seed, m_publicKeyX, m_publicKeyY);
+	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, m_size, index, m_mode, m_clScoreLimit, seed, m_publicKeyX, m_publicKeyY);
 	pDevice->printSeed();
 	if(initRound) {
 		pDevice->addRound(initRound);
@@ -284,7 +357,7 @@ void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, 
 }
 
 void Dispatcher::run() {
-	m_eventFinished = clCreateUserEvent(m_clContext, NULL);
+	//m_eventFinished = clCreateUserEvent(m_clContext, NULL);
 	timeStart = std::chrono::steady_clock::now();
 
 	init();
@@ -306,9 +379,10 @@ void Dispatcher::run() {
 		dispatch(*(*it));
 	}
 
-	clWaitForEvents(1, &m_eventFinished);
-	clReleaseEvent(m_eventFinished);
-	m_eventFinished = NULL;
+	//clWaitForEvents(1, &m_eventFinished);
+	//clReleaseEvent(m_eventFinished);
+	//m_eventFinished = NULL;
+	while(m_countRunning) sleep(1);
 }
 
 void Dispatcher::init() {
@@ -384,7 +458,7 @@ void Dispatcher::initBegin(Device & d) {
 	d.m_memData1.setKernelArg(d.m_kernelScore, 2);
 	d.m_memData2.setKernelArg(d.m_kernelScore, 3);
 
-	CLMemory<cl_uchar>::setKernelArg(d.m_kernelScore, 4, d.m_clScoreMax); // Updated in handleResult()
+	CLMemory<cl_ulong>::setKernelArg(d.m_kernelScore, 4, d.m_clScoreMax); // Updated in handleResult()
 
 	// Seed device
 	initContinue(d);
@@ -491,12 +565,12 @@ void Dispatcher::dispatch(Device & d) {
 }
 
 void Dispatcher::handleResult(Device & d) {
-	for (auto i = PROFANITY_MAX_SCORE; i > m_clScoreMax; --i) {
+	for (auto i = m_clScoreLimit; i > m_clScoreMax; --i) {
 		result & r = d.m_memResult[i];
 
 		if (r.found > 0 && i >= d.m_clScoreMax) {
 			d.m_clScoreMax = i;
-			CLMemory<cl_uchar>::setKernelArg(d.m_kernelScore, 4, d.m_clScoreMax);
+			CLMemory<cl_ulong>::setKernelArg(d.m_kernelScore, 4, d.m_clScoreMax);
 
 			std::lock_guard<std::mutex> lock(m_mutex);
 			if (i >= m_clScoreMax) {
@@ -532,6 +606,9 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 			if(currmillis > m_next_speed_print) {
 				printSpeed(d);
 				m_next_speed_print = currmillis + 50;
+				if(m_clRoundLimit && (d.m_round + d.m_round_shift > m_clRoundLimit)) {
+					m_quit = true;
+				}
 			}
 
 			if( m_quit ) {

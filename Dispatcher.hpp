@@ -40,7 +40,7 @@ class Dispatcher {
 			void addRound(cl_ulong val);
 
 
-			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY);
+			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode, const cl_ulong clScoreLimit, cl_ulong4 clSeed, cl_ulong4 clSeedX, cl_ulong4 clSeedY);
 			~Device();
 
 			Dispatcher & m_parent;
@@ -48,7 +48,7 @@ class Dispatcher {
 
 			cl_device_id m_clDeviceId;
 			size_t m_worksizeLocal;
-			cl_uchar m_clScoreMax;
+			cl_ulong m_clScoreMax;
 			cl_command_queue m_clQueue;
 
 			cl_kernel m_kernelInit;
@@ -83,7 +83,7 @@ class Dispatcher {
 		};
 
 	public:
-		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY);
+		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_ulong clScoreLimit, const cl_ulong RoundLimit, const cl_ulong4 pubKeyX, const cl_ulong4 pubKeyY);
 		~Dispatcher();
 
 		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index, const cl_ulong4 *initSeed, const cl_ulong initRound);
@@ -94,6 +94,7 @@ class Dispatcher {
 		static std::string toHex(const unsigned long val);
 		static std::string hexToStr(const std::string &str);
 		static std::string toTron(const uint8_t * s);
+		static bool DecodeBase58(const char* psz, std::vector<unsigned char>& vch, int max_ret_len);
 
 	private:
 		void init();
@@ -122,8 +123,10 @@ class Dispatcher {
 		const size_t m_worksizeMax;
 		const size_t m_inverseSize;
 		const size_t m_size;
-		cl_uchar m_clScoreMax;
-		cl_uchar m_clScoreQuit;
+		cl_ulong m_clScoreMax;
+		cl_ulong m_clScoreLimit;
+		cl_ulong m_clScoreQuit;
+		cl_ulong m_clRoundLimit;
 
 		std::vector<Device *> m_vDevices;
 

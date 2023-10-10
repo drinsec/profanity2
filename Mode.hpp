@@ -21,6 +21,7 @@ class Mode {
 
 	public:
 		static Mode matching(const std::string strHex);
+		static Mode tron_prefix(const std::string prefix);
 		static Mode range(const cl_uchar min, const cl_uchar max);
 		static Mode leading(const char charLeading);
 		static Mode leadingRange(const cl_uchar min, const cl_uchar max);
@@ -45,7 +46,7 @@ class Mode {
 
 		cl_uchar data1[20];
 		cl_uchar data2[20];
-		cl_uchar score;
+		cl_ulong score;
 };
 
 #endif /* HPP_MODE */

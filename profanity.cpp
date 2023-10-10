@@ -232,9 +232,13 @@ bool printResult(const cl_int err) {
 	return err != CL_SUCCESS;
 }
 
-std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize, unsigned long checksums) {
+std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize, unsigned long checksums, cl_ulong maxScore) {
 	const auto uniqueId = getUniqueDeviceIdentifier(d);
-	return "cache-opencl-" + Dispatcher::toHex(checksums) + "." + toString(inverseSize) + "." + toString(uniqueId);
+	std::string r("cache-opencl-" + Dispatcher::toHex(checksums) + "." + toString(inverseSize) + "." + toString(uniqueId));
+	if(maxScore && maxScore != PROFANITY_MAX_SCORE) {
+		r = r + "." + toString(maxScore);
+	}
+	return r;
 }
 
 int main(int argc, char * * argv) {
@@ -253,6 +257,7 @@ int main(int argc, char * * argv) {
 		bool bModeNumbers = false;
 		std::string strModeLeading;
 		std::string strModeMatching;
+		std::string strModeTron;
 		std::string strPublicKey;
 		bool bModeLeadingRange = false;
 		bool bModeRange = false;
@@ -266,8 +271,10 @@ int main(int argc, char * * argv) {
 		bool bNoCache = false;
 		size_t inverseSize = 255;
 		size_t inverseMultiple = 16384;
+		cl_ulong maxScore = 0;
 		bool bMineContract = false;
 		cl_ulong initRound = 0;
+		cl_ulong RoundLimit = 0;
 		cl_ulong4 *initSeed = NULL;
 		cl_ulong4 pubKeyX, pubKeyY;
 
@@ -306,6 +313,9 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('c', "contract", bMineContract);
 		argp.addSwitch('g', "gas", bModeGas);
 		argp.addSwitch('r', "initRound", initRound);
+		argp.addSwitch('R', "RoundLimit", RoundLimit);
+		argp.addSwitch('S', "maxScore", maxScore);
+		argp.addSwitch('T', "TRON", strModeTron);
 		argp.addSwitch('z', "publicKey", strPublicKey);
 
 		if (!argp.parse()) {
@@ -316,6 +326,12 @@ int main(int argc, char * * argv) {
 		if (bHelp) {
 			std::cout << g_strHelp << std::endl;
 			return 0;
+		}
+		
+		if(maxScore) {
+			std::cout << "Overriding PROFANITY_MAX_SCORE(" << PROFANITY_MAX_SCORE << ") with maxScore(" << maxScore << ")" << std::endl;
+		} else {
+			maxScore = PROFANITY_MAX_SCORE;
 		}
 
 		Mode mode = Mode::benchmark();
@@ -333,6 +349,8 @@ int main(int argc, char * * argv) {
 			mode = Mode::leading(strModeLeading.front());
 		} else if (!strModeMatching.empty()) {
 			mode = Mode::matching(strModeMatching);
+		} else if (!strModeTron.empty()) {
+			mode = Mode::tron_prefix(strModeTron);
 		} else if (bModeLeadingRange) {
 			mode = Mode::leadingRange(rangeMin, rangeMax);
 		} else if (bModeRange) {
@@ -403,7 +421,7 @@ int main(int argc, char * * argv) {
 
 			// Check if there's a prebuilt binary for this device and load it
 			if(!bNoCache) {
-				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize, KernelsChecksum), std::ios::binary);
+				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize, KernelsChecksum, maxScore), std::ios::binary);
 				if (fileIn.is_open()) {
 					vDeviceBinary.push_back(std::string((std::istreambuf_iterator<char>(fileIn)), std::istreambuf_iterator<char>()));
 					vDeviceBinarySize.push_back(vDeviceBinary.back().size());
@@ -456,7 +474,7 @@ int main(int argc, char * * argv) {
 
 		// Build the program
 		std::cout << "  Building program..." << std::flush;
-		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize) + " -D PROFANITY_MAX_SCORE=" + toString(PROFANITY_MAX_SCORE);
+		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize) + " -D PROFANITY_MAX_SCORE=" + toString(maxScore);
 		if (printResult(clBuildProgram(clProgram, vDevices.size(), vDevices.data(), strBuildOptions.c_str(), NULL, NULL))) {
 #ifdef PROFANITY_DEBUG
 			std::cout << std::endl;
@@ -478,7 +496,7 @@ int main(int argc, char * * argv) {
 			std::cout << "  Saving program..." << std::flush;
 			auto binaries = getBinaries(clProgram);
 			for (size_t i = 0; i < binaries.size(); ++i) {
-				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize, KernelsChecksum), std::ios::binary);
+				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize, KernelsChecksum, maxScore), std::ios::binary);
 				fileOut.write(binaries[i].data(), binaries[i].size());
 			}
 			std::cout << "OK" << std::endl;
@@ -486,7 +504,7 @@ int main(int argc, char * * argv) {
 
 		std::cout << std::endl;
 
-		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, 0, pubKeyX, pubKeyY);
+		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, maxScore, RoundLimit, pubKeyX, pubKeyY);
 		for (auto & i : vDevices) {
 			d.addDevice(i, worksizeLocal, mDeviceIndex[i], initSeed, initRound);
 		}
