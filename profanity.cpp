@@ -51,9 +51,9 @@ inline uint64_t htonll(uint64_t const hostlonglong) {
 #endif
 
 static uint32_t crc32_update(uint32_t crc, const char* data, size_t len) {
-	for (int i = 0; i < len; ++i) {
+	for (size_t i = 0; i < len; ++i) {
 		crc ^= static_cast<uint32_t>(data[i]);
-		for (int j = 0; j < 8; ++j)
+		for (size_t j = 0; j < 8; ++j)
 			crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
 	}
 
@@ -362,6 +362,11 @@ int main(int argc, char * * argv) {
 		} else {
 			std::cout << g_strHelp << std::endl;
 			return 0;
+		}
+
+		if(mode.kernel == "ERROR") {
+			std::cout << "Init mode error: " << mode.name << std::endl;
+			return 1;
 		}
 
 		if (strPublicKey.length() == 0) {
